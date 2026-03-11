@@ -23,12 +23,12 @@
   "main": "index.js",
   "type": "module",
   "bin": {
-    "garden-init": "bin/garden-init.js"
+    "garden-init": "bin/garden-init.cjs"
   },
   "scripts": {
     "test": "standard",
     "lint": "eslint .  --ext .js",
-    "postinstall": "node scripts/postinstall.js"
+    "postinstall": "node scripts/postinstall.cjs"
   },
   "keywords": [
     "homebridge-plugin",
