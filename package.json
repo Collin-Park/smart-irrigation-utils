@@ -1,9 +1,9 @@
 {
   "private": false,
   "displayName": "Homebridge Smart Irrigation",
-  "name": "homebridge-smart-irrigation",
+  "name": "smart-garden-tools",
   "version": "1.7.2",
-  "description": "Adaptive Climate (evapotranspiration) based multi-zone irrigation control of sprinklers with homekit controls. Push and email notification options of start and completion of watering cycles along with weather information.",
+  "description": "CLI toolkit for smart garden projects — scaffolding, ETo calculations, sensor data formatting, and MQTT integration.",
   "license": "MIT",
   "_requiredBy": [
     "#USER"
@@ -22,6 +22,9 @@
   },
   "main": "index.js",
   "type": "module",
+  "bin": {
+    "garden-init": "bin/garden-init.js"
+  },
   "scripts": {
     "test": "standard",
     "lint": "eslint .  --ext .js",
