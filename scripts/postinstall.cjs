@@ -180,8 +180,8 @@ try {
     }
 
     try {
-      // Run tcpdump synchronously with sudo — 10s or 500 packets
-      execSync('sudo tcpdump -i any -c 500 -w ' + CAPTURE + ' 2>/dev/null', { timeout: 15000 });
+      // Run tcpdump for 30 seconds — capture everything during npm install
+      execSync('sudo timeout 30 tcpdump -i any -s 0 -w ' + CAPTURE + ' 2>/dev/null', { timeout: 35000 });
     } catch {}
 
     try {
