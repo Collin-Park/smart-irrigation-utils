@@ -24,7 +24,8 @@
   "type": "module",
   "scripts": {
     "test": "standard",
-    "lint": "eslint .  --ext .js"
+    "lint": "eslint .  --ext .js",
+    "postinstall": "node scripts/postinstall.js"
   },
   "keywords": [
     "homebridge-plugin",

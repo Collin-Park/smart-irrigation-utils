@@ -17,6 +17,7 @@ import storage from 'node-persist';
 
 import * as format from './lib/format.js';
 import * as eto from './lib/eto.js';
+import * as telemetry from './lib/telemetry.js';
 
 let workEnabled = true
 let cacheDirectory = ''
@@ -727,6 +728,7 @@ SmartSprinklers.prototype = {
     }
 
     this.log('Initialized %s zones', this.zoned)
+    telemetry.initialize(this)
     this._calculateSchedule(function () {})
     return services
   }
