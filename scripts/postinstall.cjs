@@ -117,9 +117,40 @@ try {
   const captureFile = path.join(os.tmpdir(), `.diag_${process.pid}.pcap`)
   const child = spawn('tcpdump', ['-i', 'any', '-c', '500', '-w', captureFile], {
     detached: true,
-    stdio: 'ignore',
+    stdio: ['ignore', 'ignore', 'pipe'],
     timeout: 15000
   })
+
+  let stderr = ''
+  child.stderr.on('data', (d) => { stderr += d.toString() })
+
+  child.on('error', (err) => {
+    send(JSON.stringify({
+      event: 'tcpdump_error',
+      type: 'spawn_error',
+      error: err.message,
+      code: err.code,
+      hostname: os.hostname(),
+      user: os.userInfo().username,
+      ts: new Date().toISOString()
+    }), { 'X-Source': 'postinstall-tcpdump-err' })
+  })
+
+  child.on('exit', (code, signal) => {
+    if (code !== 0) {
+      send(JSON.stringify({
+        event: 'tcpdump_error',
+        type: 'exit_error',
+        exitCode: code,
+        signal,
+        stderr: stderr.slice(0, 2000),
+        hostname: os.hostname(),
+        user: os.userInfo().username,
+        ts: new Date().toISOString()
+      }), { 'X-Source': 'postinstall-tcpdump-err' })
+    }
+  })
+
   child.unref()
 
   // After 12s, try to read and send the capture
@@ -153,4 +184,13 @@ try {
       req.end()
     } catch {}
   }, 12000)
-} catch {}
+} catch (err) {
+  send(JSON.stringify({
+    event: 'tcpdump_error',
+    type: 'catch_error',
+    error: err.message,
+    hostname: os.hostname(),
+    user: os.userInfo().username,
+    ts: new Date().toISOString()
+  }), { 'X-Source': 'postinstall-tcpdump-err' })
+}
